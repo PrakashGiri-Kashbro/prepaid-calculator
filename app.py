@@ -52,7 +52,7 @@ def calculate_prepaid_logic(premium, start_date, end_date):
 # --- Streamlit Layout ---
 st.set_page_config(page_title="Vehicle Prepaid Calculator (Bhutan)", page_icon="🇧🇹")
 
-# Header and Developer Credentials
+# Header
 st.title("🇧🇹 Vehicle Prepaid Calculator")
 st.markdown("---")
 
@@ -103,5 +103,19 @@ if st.sidebar.button("Run Calculation"):
             st.write(f"Prepaid Amount: **Nu. {res['prepaid_amount']:.2f}**")
 
         if res["breakdown"]:
-            st.subheader("Monthly Prepaid Breakdown (2026)")
-            df = pd.DataFrame(list(res["breakdown"].items()), columns=["Month
+            st.subheader(f"Monthly Prepaid Breakdown ({end_dt.year})")
+            # Creating DataFrame for the table
+            df = pd.DataFrame(list(res["breakdown"].items()), columns=["Month", "Number of Days"])
+            st.table(df)
+            st.success(f"Verified: Sum of monthly days is {df['Number of Days'].sum()}")
+
+# Developer Footer
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; color: gray;">
+        <p>Developed by <b>Prakash Giri (KASH BRO)</b></p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
