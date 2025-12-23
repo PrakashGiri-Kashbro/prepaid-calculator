@@ -1,44 +1,40 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import date
 from dateutil.relativedelta import relativedelta
 import calendar
 
-def calculate_prepaid(premium, start_date, end_date):
-    # Calculate Total Days in the Period
-    total_days = (end_date - start_date).days
+# Function to calculate the breakdown
+def calculate_prepaid_logic(premium, start_date, end_date):
+    # INCLUSIVE COUNT: (End - Start) + 1
+    total_days = (end_date - start_date).days + 1
+    
     if total_days <= 0:
-        return None, "End date must be after start date."
+        return None, "Error: End date must be on or after start date."
     
     rate_per_day = premium / total_days
     
-    # Identify the start of the prepaid period (Jan 1st of the following year)
+    # The 'Prepaid' period starts on January 1st of the year following the start date
     first_prepaid_day = date(start_date.year + 1, 1, 1)
     
-    # If the policy ends before the next year starts, there are no prepaid days
     if end_date < first_prepaid_day:
-        prepaid_days = 0
         current_booking_days = total_days
+        prepaid_days = 0
         monthly_breakdown = {}
     else:
+        last_day_current_year = date(start_date.year, 12, 31)
+        current_booking_days = (last_day_current_year - start_date).days + 1
         prepaid_days = (end_date - first_prepaid_day).days + 1
-        current_booking_days = total_days - prepaid_days
         
-        # Calculate monthly breakdown for the prepaid period
         monthly_breakdown = {}
-        current_month_start = first_prepaid_day
-        
-        while current_month_start <= end_date:
-            month_name = current_month_start.strftime("%b")
-            # Last day of current month or end_date
-            last_day_of_month = date(current_month_start.year, current_month_start.month, 
-                                     calendar.monthrange(current_month_start.year, current_month_start.month)[1])
-            
-            period_end = min(last_day_of_month, end_date)
-            days_in_month = (period_end - current_month_start).days + 1
-            
-            monthly_breakdown[month_name] = days_in_month
-            current_month_start = last_day_of_month + relativedelta(days=1)
+        curr = first_prepaid_day
+        while curr <= end_date:
+            month_label = curr.strftime("%b")
+            last_day_of_month = date(curr.year, curr.month, calendar.monthrange(curr.year, curr.month)[1])
+            actual_end = min(last_day_of_month, end_date)
+            days_in_this_month = (actual_end - curr).days + 1
+            monthly_breakdown[month_label] = days_in_this_month
+            curr = last_day_of_month + relativedelta(days=1)
 
     prepaid_amount = rate_per_day * prepaid_days
     current_amount = premium - prepaid_amount
@@ -47,50 +43,65 @@ def calculate_prepaid(premium, start_date, end_date):
         "rate": rate_per_day,
         "total_days": total_days,
         "prepaid_days": prepaid_days,
+        "current_days": current_booking_days,
         "prepaid_amount": prepaid_amount,
         "current_amount": current_amount,
         "breakdown": monthly_breakdown
     }, None
 
-# Streamlit UI
-st.set_page_config(page_title="Vehicle Prepaid Calculator", layout="centered")
-st.title("🚗 Vehicle Prepaid Calculator")
-st.write("Calculate your prepaid insurance amounts and monthly breakdowns.")
+# --- Streamlit Layout ---
+st.set_page_config(page_title="Vehicle Prepaid Calculator (Bhutan)", page_icon="🇧🇹")
 
-# Sidebar Inputs
-st.sidebar.header("Input Parameters")
-premium = st.sidebar.number_input("Premium Amount", min_value=0.0, value=2550.0, step=50.0)
-start_date = st.sidebar.date_input("Start Date", value=date(2025, 12, 14))
-end_date = st.sidebar.date_input("End Date", value=date(2026, 12, 14))
+# Header and Developer Credentials
+st.title("🇧🇹 Vehicle Prepaid Calculator")
+st.markdown("---")
 
-if st.sidebar.button("Calculate"):
-    results, error = calculate_prepaid(premium, start_date, end_date)
+# Sidebar for inputs
+st.sidebar.header("Calculation Settings")
+
+# Dropdown for Item Type
+item_type = st.sidebar.selectbox(
+    "Select Document Type",
+    [
+        "Vehicle Register (Blue Book)",
+        "Emission",
+        "Road Worthiness (Fitness)",
+        "Route Permit",
+        "Insurance"
+    ]
+)
+
+premium_input = st.sidebar.number_input("Amount (Nu.)", min_value=0.0, value=2550.00, step=0.01)
+start_dt = st.sidebar.date_input("Start Date", value=date(2025, 12, 25))
+end_dt = st.sidebar.date_input("End Date", value=date(2026, 12, 24))
+
+if st.sidebar.button("Run Calculation"):
+    res, error = calculate_prepaid_logic(premium_input, start_dt, end_dt)
     
     if error:
         st.error(error)
     else:
-        # Layout columns
-        col1, col2 = st.columns(2)
+        st.header(f"Results for: {item_type}")
         
-        with col1:
-            st.subheader("Summary")
-            st.metric("Total Days", results["total_days"])
-            st.metric("Rate Per Day", f"${results['rate']:.4f}")
-            st.metric("Total Prepaid Days", results["prepaid_days"])
+        # Display Results
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Days", f"{res['total_days']}")
+        col2.metric("Rate / Day", f"Nu. {res['rate']:.4f}")
+        col3.metric("Prepaid Days", f"{res['prepaid_days']}")
 
-        with col2:
-            st.subheader("Financials")
-            st.metric("Prepaid Amount", f"${results['prepaid_amount']:.2f}")
-            st.metric("Current Booking Amount", f"${results['current_amount']:.2f}")
+        st.divider()
 
-        # Monthly Breakdown Table
-        st.subheader("Number of Prepaid Days (Monthly Breakdown)")
-        if results["breakdown"]:
-            df_breakdown = pd.DataFrame(list(results["breakdown"].items()), columns=["Month", "Days"])
-            st.table(df_breakdown)
-            st.info(f"Total calculated prepaid days: {df_breakdown['Days'].sum()}")
-        else:
-            st.info("No prepaid days (period falls entirely within the starting year).")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader(f"Current Period ({start_dt.year})")
+            st.write(f"Days: **{res['current_days']}**")
+            st.write(f"Booking Amount: **Nu. {res['current_amount']:.2f}**")
+            
+        with c2:
+            st.subheader(f"Prepaid Period ({end_dt.year})")
+            st.write(f"Days: **{res['prepaid_days']}**")
+            st.write(f"Prepaid Amount: **Nu. {res['prepaid_amount']:.2f}**")
 
-st.markdown("---")
-st.caption("Logic based on standard calendar days. Rate per day = Premium / Total Days.")
+        if res["breakdown"]:
+            st.subheader("Monthly Prepaid Breakdown (2026)")
+            df = pd.DataFrame(list(res["breakdown"].items()), columns=["Month
