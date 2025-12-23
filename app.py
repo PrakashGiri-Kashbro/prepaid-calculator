@@ -4,40 +4,54 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 import calendar
 
-# Function to calculate the breakdown
+# Mapping Item Types to GL Codes
+GL_MAPPING = {
+    "Vehicle Register (Blue Book)": "450110 - R&M Vehicle",
+    "Emission": "450110 - R&M Vehicle",
+    "Road Worthiness (Fitness)": "450110 - R&M Vehicle",
+    "Route Permit": "450110 - R&M Vehicle",
+    "Insurance": "432200 - Insurance on Vehicle"
+}
+
 def calculate_prepaid_logic(premium, start_date, end_date):
-    # INCLUSIVE COUNT: (End - Start) + 1
     total_days = (end_date - start_date).days + 1
     
     if total_days <= 0:
         return None, "Error: End date must be on or after start date."
     
-    rate_per_day = premium / total_days
+    # Using 2 decimal places for the rate per day
+    rate_per_day = round(premium / total_days, 2)
     
-    # The 'Prepaid' period starts on January 1st of the year following the start date
     first_prepaid_day = date(start_date.year + 1, 1, 1)
     
     if end_date < first_prepaid_day:
         current_booking_days = total_days
         prepaid_days = 0
-        monthly_breakdown = {}
+        monthly_breakdown = []
     else:
         last_day_current_year = date(start_date.year, 12, 31)
         current_booking_days = (last_day_current_year - start_date).days + 1
         prepaid_days = (end_date - first_prepaid_day).days + 1
         
-        monthly_breakdown = {}
+        monthly_breakdown = []
         curr = first_prepaid_day
         while curr <= end_date:
-            month_label = curr.strftime("%b")
+            month_label = curr.strftime("%b %Y")
             last_day_of_month = date(curr.year, curr.month, calendar.monthrange(curr.year, curr.month)[1])
             actual_end = min(last_day_of_month, end_date)
-            days_in_this_month = (actual_end - curr).days + 1
-            monthly_breakdown[month_label] = days_in_this_month
+            days_in_month = (actual_end - curr).days + 1
+            
+            # Rounding monthly amounts to 2 decimal places
+            monthly_breakdown.append({
+                "Month": month_label,
+                "Days": days_in_month,
+                "Amount (Nu.)": round(days_in_month * rate_per_day, 2)
+            })
             curr = last_day_of_month + relativedelta(days=1)
 
-    prepaid_amount = rate_per_day * prepaid_days
-    current_amount = premium - prepaid_amount
+    prepaid_amount = round(rate_per_day * prepaid_days, 2)
+    # Ensure the total matches exactly by subtracting prepaid from total
+    current_amount = round(premium - prepaid_amount, 2)
     
     return {
         "rate": rate_per_day,
@@ -50,28 +64,15 @@ def calculate_prepaid_logic(premium, start_date, end_date):
     }, None
 
 # --- Streamlit Layout ---
-st.set_page_config(page_title="Vehicle Prepaid Calculator (Bhutan)", page_icon="🇧🇹")
+st.set_page_config(page_title="Vehicle Prepaid Calculator", page_icon="🇧🇹")
 
-# Header
 st.title("🇧🇹 Vehicle Prepaid Calculator")
-st.markdown("---")
-
-# Sidebar for inputs
 st.sidebar.header("Calculation Settings")
 
-# Dropdown for Item Type
-item_type = st.sidebar.selectbox(
-    "Select Document Type",
-    [
-        "Vehicle Register (Blue Book)",
-        "Emission",
-        "Road Worthiness (Fitness)",
-        "Route Permit",
-        "Insurance"
-    ]
-)
+item_type = st.sidebar.selectbox("Select Document Type", list(GL_MAPPING.keys()))
+gl_code = GL_MAPPING[item_type]
 
-premium_input = st.sidebar.number_input("Amount (Nu.)", min_value=0.0, value=2550.00, step=0.01)
+premium_input = st.sidebar.number_input("Total Amount (Nu.)", min_value=0.0, value=2550.00, step=0.01)
 start_dt = st.sidebar.date_input("Start Date", value=date(2025, 12, 25))
 end_dt = st.sidebar.date_input("End Date", value=date(2026, 12, 24))
 
@@ -82,40 +83,37 @@ if st.sidebar.button("Run Calculation"):
         st.error(error)
     else:
         st.header(f"Results for: {item_type}")
+        st.info(f"**Target GL Code:** {gl_code} | **Prepaid GL Code:** 284000")
         
-        # Display Results
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Days", f"{res['total_days']}")
-        col2.metric("Rate / Day", f"Nu. {res['rate']:.4f}")
+        col2.metric("Rate / Day", f"Nu. {res['rate']:.2f}")
         col3.metric("Prepaid Days", f"{res['prepaid_days']}")
 
         st.divider()
 
+        # Accounting Summary
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader(f"Current Period ({start_dt.year})")
+            st.subheader(f"Current Year ({start_dt.year})")
+            st.write(f"GL Code: `{gl_code.split(' - ')[0]}`")
             st.write(f"Days: **{res['current_days']}**")
-            st.write(f"Booking Amount: **Nu. {res['current_amount']:.2f}**")
+            st.markdown(f"### Nu. {res['current_amount']:.2f}")
             
         with c2:
-            st.subheader(f"Prepaid Period ({end_dt.year})")
+            st.subheader(f"Prepaid Asset ({end_dt.year})")
+            st.write("GL Code: `284000`")
             st.write(f"Days: **{res['prepaid_days']}**")
-            st.write(f"Prepaid Amount: **Nu. {res['prepaid_amount']:.2f}**")
+            st.markdown(f"### Nu. {res['prepaid_amount']:.2f}")
 
         if res["breakdown"]:
-            st.subheader(f"Monthly Prepaid Breakdown ({end_dt.year})")
-            # Creating DataFrame for the table
-            df = pd.DataFrame(list(res["breakdown"].items()), columns=["Month", "Number of Days"])
+            st.subheader(f"Monthly Prepaid Amortization ({end_dt.year})")
+            df = pd.DataFrame(res["breakdown"])
             st.table(df)
-            st.success(f"Verified: Sum of monthly days is {df['Number of Days'].sum()}")
+            
+            # Totals check
+            total_prepaid_calc = df["Amount (Nu.)"].sum()
+            st.success(f"Verified: Sum of monthly breakdown is Nu. {total_prepaid_calc:.2f}")
 
-# Developer Footer
 st.markdown("---")
-st.markdown(
-    """
-    <div style="text-align: center; color: gray;">
-        <p>Developed by <b>Prakash Giri (KASH BRO)</b></p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+st.markdown('<div style="text-align: center; color: gray;"><p>Developed by <b>Prakash Giri (KASH BRO)</b></p></div>', unsafe_allow_html=True)
