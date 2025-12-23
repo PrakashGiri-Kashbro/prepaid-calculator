@@ -14,14 +14,16 @@ GL_MAPPING = {
 }
 
 def calculate_prepaid_logic(premium, start_date, end_date):
+    # INCLUSIVE COUNT: (End - Start) + 1
     total_days = (end_date - start_date).days + 1
     
     if total_days <= 0:
         return None, "Error: End date must be on or after start date."
     
-    # Precise daily rate rounded to 2 decimals
+    # Calculate rate per day rounded to 2 decimals
     rate_per_day = round(premium / total_days, 2)
     
+    # Prepaid starts Jan 1st of the following year
     first_prepaid_day = date(start_date.year + 1, 1, 1)
     
     if end_date < first_prepaid_day:
@@ -36,20 +38,20 @@ def calculate_prepaid_logic(premium, start_date, end_date):
         monthly_breakdown = []
         curr = first_prepaid_day
         while curr <= end_date:
-            # Formatting month as "Jan 2026" for clarity
             month_label = curr.strftime("%b %Y")
             last_day_of_month = date(curr.year, curr.month, calendar.monthrange(curr.year, curr.month)[1])
             actual_end = min(last_day_of_month, end_date)
-            days_in_month = (actual_end - curr).days + 1
+            days_in_this_month = (actual_end - curr).days + 1
             
             monthly_breakdown.append({
                 "Month": month_label,
-                "Days": days_in_month,
-                "Amount (Nu.)": round(days_in_month * rate_per_day, 2)
+                "Number of Days": days_in_this_month,
+                "Amount (Nu.)": round(days_in_this_month * rate_per_day, 2)
             })
             curr = last_day_of_month + relativedelta(days=1)
 
     prepaid_amount = round(rate_per_day * prepaid_days, 2)
+    # Balance amount goes to current year to ensure total matches exactly
     current_amount = round(premium - prepaid_amount, 2)
     
     return {
@@ -63,26 +65,25 @@ def calculate_prepaid_logic(premium, start_date, end_date):
     }, None
 
 # --- Streamlit Layout ---
-st.set_page_config(page_title="Vehicle Prepaid Calculator", page_icon="🇧🇹", layout="wide")
+st.set_page_config(page_title="Vehicle Prepaid Calculator (Bhutan)", page_icon="🇧🇹", layout="wide")
 
-# Bold and Clear Credential Heading
+# Bold and Clear Credentials Header
 st.markdown("""
-    <div style="text-align: center; background-color: #f0f2f6; padding: 20px; border-radius: 10px; border: 2px solid #ff4b4b;">
-        <h1 style="margin: 0; color: #1f1f1f;">🇧🇹 Vehicle Prepaid Calculator</h1>
-        <h2 style="margin: 5px; color: #ff4b4b;">Developed by: PRAKASH GIRI (KASH BRO)</h2>
+    <div style="text-align: center; background-color: #f9f9f9; padding: 25px; border-radius: 15px; border: 3px solid #ff4b4b; margin-bottom: 20px;">
+        <h1 style="margin: 0; color: #333;">🇧🇹 Vehicle Prepaid Calculator</h1>
+        <hr style="border: 1px solid #ddd;">
+        <h2 style="margin: 10px; color: #ff4b4b; font-weight: bold; letter-spacing: 1px;">
+            Developed by: PRAKASH GIRI (KASH BRO)
+        </h2>
     </div>
     """, unsafe_allow_html=True)
 
-st.markdown("---")
-
-# Sidebar
+# Sidebar for inputs
 st.sidebar.header("Calculation Settings")
 item_type = st.sidebar.selectbox("Select Document Type", list(GL_MAPPING.keys()))
 gl_code = GL_MAPPING[item_type]
 
-premium_input = st.sidebar.number_input("Total Amount (Nu.)", min_value=0.0, value=2550.00, step=0.01)
-
-# Input dates - note: Streamlit date_input displays based on locale but we format results below
+premium_input = st.sidebar.number_input("Amount (Nu.)", min_value=0.0, value=2550.00, step=0.01)
 start_dt = st.sidebar.date_input("Start Date", value=date(2025, 12, 25))
 end_dt = st.sidebar.date_input("End Date", value=date(2026, 12, 24))
 
@@ -92,10 +93,10 @@ if st.sidebar.button("Run Calculation"):
     if error:
         st.error(error)
     else:
-        st.subheader(f"Results for: {item_type}")
-        st.info(f"**Period:** {start_dt.strftime('%d/%m/%Y')} to {end_dt.strftime('%d/%m/%Y')} | **GL:** {gl_code}")
+        st.header(f"Results for: {item_type}")
+        st.info(f"**Period:** {start_dt.strftime('%d/%m/%Y')} to {end_dt.strftime('%d/%m/%Y')} | **Expense GL:** {gl_code}")
         
-        # Top level metrics
+        # Dashboard Metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Days", f"{res['total_days']}")
         m2.metric("Rate / Day", f"Nu. {res['rate']:.2f}")
@@ -104,16 +105,7 @@ if st.sidebar.button("Run Calculation"):
 
         st.divider()
 
-        # Accounting Split
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"### Current Expense ({start_dt.year})")
-            st.code(f"GL Code: {gl_code.split(' - ')[0]}", language="text")
-            st.write(f"Duration: {start_dt.strftime('%d/%m/%Y')} - 31/12/{start_dt.year}")
-            st.title(f"Nu. {res['current_amount']:.2f}")
-            
-        with c2:
-            st.markdown(f"### Prepaid Asset (284000)")
-            st.code(f"GL Code: 284000", language="text")
-            st.write(f"Duration: 01/01/{end_dt.year} - {end_dt.strftime('%d/%m/%Y')}")
-            st.title(f"Nu. {res['prepaid_
+        # Split View
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.markdown(f"### Current Expense ({start_dt.year
