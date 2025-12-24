@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from io import BytesIO
 
-# ---------------- GL MAPPING (Based on your provided Excel structure) ----------------
+# ---------------- GL MAPPING (Based on your Excel structure) ----------------
 GL_CODES = {
     "Insurance": "432200",
     "Blue Book": "450110",
@@ -40,11 +40,14 @@ if 'vehicles' not in st.session_state:
     st.session_state.vehicles = []
 if 'entry_status' not in st.session_state:
     st.session_state.entry_status = "Waiting for input..."
+if 'show_report' not in st.session_state:
+    st.session_state.show_report = False
 
 # ---------------- SIDEBAR (ENTRY INDICATOR) ----------------
 with st.sidebar:
     st.header("📊 Entry Indicator")
     
+    # Status messaging
     if "Waiting" in st.session_state.entry_status:
         st.info(st.session_state.entry_status)
     elif "Duplicate" in st.session_state.entry_status or "Error" in st.session_state.entry_status:
@@ -53,7 +56,7 @@ with st.sidebar:
         st.success(st.session_state.entry_status)
     
     st.divider()
-    st.subheader("Stored Records")
+    st.subheader("Current Session Records")
     if st.session_state.vehicles:
         for v in st.session_state.vehicles:
             st.caption(f"✅ {v['Vehicle No.']}")
@@ -64,7 +67,7 @@ with st.sidebar:
 st.markdown("""
 <div style="text-align:center; padding:10px; border-radius:10px; background: linear-gradient(90deg, #1f77b4, #2ca02c); color:white;">
     <h1 style="margin:0;">Vehicle Prepaid Statement Generator</h1>
-    <p style="margin:0;">Developed by: PRAKASH GIRI (KASH BRO)</p>
+    <p style="margin:0;">Standardized Reporting | Developed by: PRAKASH GIRI (KASH BRO)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -81,7 +84,7 @@ with st.container(border=True):
         st.markdown(f"**{label}**")
         r1, r2, r3 = st.columns(3)
         amt = r1.number_input(f"Amount", min_value=0.0, key=f"{label}_a")
-        # Streamlit date_input format for UI display
+        # Format set to DD/MM/YYYY for the calendar UI
         start = r2.date_input(f"Start Date", value=date(2025,1,1), format="DD/MM/YYYY", key=f"{label}_s")
         end = r3.date_input(f"End Date", value=date(2025,12,31), format="DD/MM/YYYY", key=f"{label}_e")
         return amt, start, end
@@ -94,7 +97,7 @@ with st.container(border=True):
     st.write("")
     col_btn1, col_btn2 = st.columns(2)
     
-    # ➕ ADD VEHICLE BUTTON
+    # ADD VEHICLE BUTTON
     if col_btn1.button("➕ Add New Vehicle", use_container_width=True):
         if not v_no:
             st.session_state.entry_status = "Error: Please enter a Vehicle No."
@@ -115,15 +118,73 @@ with st.container(border=True):
                 "Fit_C": f_c, "Fit_P": f_p,
                 "Em_C": e_c, "Em_P": e_p
             })
-            st.session_state.entry_status = f"Success: {v_no} added to report."
+            st.session_state.entry_status = f"Success: {v_no} added to list."
             st.rerun()
 
-    # 🚀 CALCULATE BUTTON
+    # CALCULATE BUTTON
     if col_btn2.button("🚀 Calculate & Generate Report", type="primary", use_container_width=True):
         if not st.session_state.vehicles:
-            st.session_state.entry_status = "Error: No data available to calculate."
+            st.session_state.entry_status = "Error: No data to calculate."
         else:
             st.session_state.show_report = True
 
 # ---------------- OUTPUT REPORT ----------------
-if st.session
+if st.session_state.show_report and st.session_state.vehicles:
+    st.divider()
+    st.write("### 2. Consolidated Statement")
+    
+    data = []
+    for i, v in enumerate(st.session_state.vehicles):
+        data.append([
+            i+1, v["Vehicle No."], v["Vehicle Discription"], v["Fuel Prepaid"],
+            v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
+            v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]
+        ])
+    
+    cols = ["Si. No.", "Vehicle No.", "Vehicle Description", "Fuel Prepaid", 
+            "Ins Current", "Ins Prepaid", "BB Current", "BB Prepaid",
+            "Fit Current", "Fit Prepaid", "Em Current", "Em Prepaid"]
+    
+    df_main = pd.DataFrame(data, columns=cols)
+    sums = df_main.sum(numeric_only=True)
+    
+    total_row = pd.DataFrame([["", "TOTAL", "", sums["Fuel Prepaid"], 
+                               sums.get("Ins Current",0), sums.get("Ins Prepaid",0),
+                               sums.get("BB Current",0), sums.get("BB Prepaid",0),
+                               sums.get("Fit Current",0), sums.get("Fit Prepaid",0),
+                               sums.get("Em Current",0), sums.get("Em Prepaid",0)]], columns=cols)
+    
+    final_table = pd.concat([df_main, total_row], ignore_index=True)
+    st.dataframe(final_table, use_container_width=True)
+
+    # ---------------- JOURNAL ENTRIES ----------------
+    st.write("### Accounting Journal Entries")
+    total_f = sums["Fuel Prepaid"]
+    total_i_p = sums["Ins Prepaid"]
+    total_rm_p = sums["BB Prepaid"] + sums["Fit Prepaid"] + sums["Em Prepaid"]
+    
+    je_data = [
+        ["Dr.", f"{GL_CODES['Prepaid']} Prepaid Expenses", f"{(total_f+total_i_p+total_rm_p):,.2f}", ""],
+        ["Cr.", f"{GL_CODES['Fuel']} vehicle fuel", "", f"{total_f:,.2f}"],
+        ["Cr.", f"{GL_CODES['Insurance']} insurance of Vehicle", "", f"{total_i_p:,.2f}"],
+        ["Cr.", f"{GL_CODES['Blue Book']} R & M of Vehicle", "", f"{total_rm_p:,.2f}"]
+    ]
+    st.table(pd.DataFrame(je_data, columns=["Type", "Particulars", "Debit (Nu.)", "Credit (Nu.)"]))
+
+    # ---------------- EXPORT ----------------
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        final_table.to_excel(writer, sheet_name='Summary', index=False)
+    
+    st.download_button(
+        label="📥 Download Excel Report",
+        data=output.getvalue(),
+        file_name=f"Prepaid_Report_{date.today().strftime('%d_%m_%Y')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    if st.button("🗑️ Reset Application"):
+        st.session_state.vehicles = []
+        st.session_state.entry_status = "Waiting for input..."
+        st.session_state.show_report = False
+        st.rerun()
