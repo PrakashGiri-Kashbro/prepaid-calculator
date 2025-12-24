@@ -15,112 +15,125 @@ GL_MAPPING = {
 }
 
 # ---------------- CALCULATION LOGIC ----------------
-def calculate_row(row):
-    premium = row["Total Amount (Nu.)"]
-    start_date = row["Start Date"]
-    end_date = row["End Date"]
+def calculate_prepaid_details(vehicle_no, item_type, premium, start_dt, end_dt):
+    gl_code, gl_desc = GL_MAPPING[item_type]
+    total_days = (end_dt - start_dt).days + 1
     
-    total_days = (end_date - start_date).days + 1
     if total_days <= 0:
         return None
 
-    rate_per_day = round(premium / total_days, 4)
-    first_prepaid_day = date(start_date.year + 1, 1, 1)
-
-    if end_date < first_prepaid_day:
-        current_days = total_days
-        prepaid_days = 0
-    else:
-        last_day_year = date(start_date.year, 12, 31)
-        current_days = (last_day_year - start_date).days + 1
-        prepaid_days = (end_date - first_prepaid_day).days + 1
-
-    prepaid_amount = round(rate_per_day * prepaid_days, 2)
-    current_amount = round(premium - prepaid_amount, 2)
+    rate_per_day = premium / total_days
+    year_end = date(start_dt.year, 12, 31)
     
-    gl_code, gl_desc = GL_MAPPING.get(row["Document Type"], ("N/A", "N/A"))
-
-    return pd.Series({
+    if end_dt <= year_end:
+        curr_days = total_days
+        pre_days = 0
+    else:
+        curr_days = (year_end - start_dt).days + 1
+        pre_days = total_days - curr_days
+            
+    prepaid_amt = round(rate_per_day * pre_days, 2)
+    current_amt = round(premium - prepaid_amt, 2)
+    
+    return {
+        "Vehicle No": vehicle_no,
+        "Document": item_type,
         "GL Code": gl_code,
-        "GL Description": gl_desc,
+        "GL Desc": gl_desc,
+        "Premium": premium,
+        "Start": start_dt,
+        "End": end_dt,
         "Total Days": total_days,
-        "Rate/Day": rate_per_day,
-        "Curr. Days": current_days,
-        "Prepaid Days": prepaid_days,
-        "Current Exp": current_amount,
-        "Prepaid Exp": prepaid_amount
-    })
+        "Rate/Day": round(rate_per_day, 2),
+        "Curr Days": curr_days,
+        "Prepaid Days": pre_days,
+        "Current Amt": current_amt,
+        "Prepaid Amt": prepaid_amt
+    }
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Multi-Vehicle Prepaid Calculator", layout="wide")
+st.set_page_config(page_title="Vehicle Prepaid Accumulator", layout="wide")
 
+# Initialize Session State to store the list of vehicles
+if 'master_list' not in st.session_state:
+    st.session_state.master_list = []
+
+# ---------------- HEADER ----------------
 st.markdown("""
-<div style="text-align:center; padding:10px; border-radius:12px; background: linear-gradient(90deg, #1f77b4, #2ca02c);">
-    <h1 style="margin:0; color:white;">Vehicle Prepaid Calculator</h1>
-    <h3 style="margin-top:5px; color:#e8f4ff;">Developed by: PRAKASH GIRI (KASH BRO)</h3>
+<div style="text-align:center; padding:15px; border-radius:12px; background: linear-gradient(90deg, #1f77b4, #2ca02c);">
+    <h1 style="margin:0; color:white;">Vehicle Prepaid Accumulator</h1>
+    <h4 style="margin-top:5px; color:#e8f4ff;">Enter vehicles one by one to build your report</h4>
 </div>
 """, unsafe_allow_html=True)
 
-st.write("### Enter Vehicle Details Below")
-st.info("Add rows by clicking the '+' at the bottom of the table. Ensure dates are in YYYY-MM-DD format.")
+# ---------------- ENTRY FORM ----------------
+with st.container():
+    st.write("### 1. New Vehicle Entry")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        v_no = st.text_input("Vehicle No", placeholder="BP-1-A1234")
+    with col2:
+        v_type = st.selectbox("Document Type", list(GL_MAPPING.keys()))
+    with col3:
+        v_amt = st.number_input("Total Amount", min_value=0.0, value=2500.0, step=0.01)
+    with col4:
+        v_start = st.date_input("Start Date", value=date.today())
+    with col5:
+        v_end = st.date_input("End Date", value=date.today() + relativedelta(years=1, days=-1))
 
-# ---------------- DATA INPUT TABLE ----------------
-# Default empty dataframe for the editor
-if 'df_input' not in st.session_state:
-    st.session_state.df_input = pd.DataFrame([{
-        "Vehicle No": "BP-1-A1234",
-        "Document Type": "Insurance",
-        "Total Amount (Nu.)": 5000.00,
-        "Start Date": date(2025, 1, 1),
-        "End Date": date(2025, 12, 31)
-    }])
+    if st.button("➕ Add Vehicle to Table", use_container_width=True):
+        if v_no:
+            new_record = calculate_prepaid_details(v_no, v_type, v_amt, v_start, v_end)
+            if new_record:
+                st.session_state.master_list.append(new_record)
+                st.toast(f"Added {v_no} successfully!")
+            else:
+                st.error("End Date must be after Start Date.")
+        else:
+            st.warning("Please enter a Vehicle Number.")
 
-edited_df = st.data_editor(
-    st.session_state.df_input,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "Document Type": st.column_config.SelectboxColumn(options=list(GL_MAPPING.keys())),
-        "Start Date": st.column_config.DateColumn(),
-        "End Date": st.column_config.DateColumn(),
-        "Total Amount (Nu.)": st.column_config.NumberColumn(format="Nu. %.2f")
-    }
-)
+# ---------------- MASTER TABLE ----------------
+if st.session_state.master_list:
+    st.write("---")
+    st.subheader("2. Consolidated Vehicle Records")
+    
+    df = pd.DataFrame(st.session_state.master_list)
+    
+    # Display the table
+    st.table(df)
 
-# ---------------- EXECUTION ----------------
-if st.button("Generate Consolidated Report"):
-    try:
-        # Apply calculation logic to every row
-        results_df = edited_df.apply(calculate_row, axis=1)
-        
-        # Combine input data with calculated results
-        final_report = pd.concat([edited_df, results_df], axis=1)
-        
-        st.divider()
-        st.subheader("Final Prepaid Report")
-        st.dataframe(final_report, use_container_width=True)
+    # Summary Calculations
+    total_prepaid = df["Prepaid Amt"].sum()
+    total_current = df["Current Amt"].sum()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Vehicles Added", len(df))
+    c2.metric("Total Current Expense", f"Nu. {total_current:,.2f}")
+    c3.metric("Total Prepaid (GL 284000)", f"Nu. {total_prepaid:,.2f}")
 
-        # Totals Summary
-        t1, t2, t3 = st.columns(3)
-        t1.metric("Total Premium", f"Nu. {final_report['Total Amount (Nu.)'].sum():,.2f}")
-        t2.metric("Total Current Expense", f"Nu. {final_report['Current Exp'].sum():,.2f}")
-        t3.metric("Total Prepaid (GL 284000)", f"Nu. {final_report['Prepaid Exp'].sum():,.2f}")
-
-        # ---------------- EXCEL EXPORT ----------------
+    # ---------------- EXPORT & CLEAR ----------------
+    st.write("---")
+    col_ex, col_cl = st.columns([1, 1])
+    
+    with col_ex:
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            final_report.to_excel(writer, sheet_name="Prepaid_Summary", index=False)
-        processed_data = output.getvalue()
-
+            df.to_excel(writer, sheet_name="Prepaid_Report", index=False)
         st.download_button(
-            label="📤 Download Excel Report",
-            data=processed_data,
-            file_name=f"Vehicle_Prepaid_Report_{date.today()}.xlsx",
+            label="📥 Download Consolidated Excel",
+            data=output.getvalue(),
+            file_name="Vehicle_Prepaid_Summary.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        
-    except Exception as e:
-        st.error(f"Error in calculation. Please check your date entries. Details: {e}")
+    
+    with col_cl:
+        if st.button("🗑️ Clear All Records"):
+            st.session_state.master_list = []
+            st.rerun()
+
+else:
+    st.info("No records added yet. Use the form above to start.")
 
 st.markdown("---")
-st.caption("Vehicle Prepaid Calculator | Financial Year Alignment | Bhutan")
+st.caption("Developed by: PRAKASH GIRI (KASH BRO) | Bhutan")
