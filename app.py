@@ -1,182 +1,126 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from dateutil.relativedelta import relativedelta
+import calendar
 from io import BytesIO
 
-# ================= PAGE CONFIG =================
-st.set_page_config(
-    page_title="Vehicle Prepaid Calculator",
-    layout="wide"
-)
-
-# ================= GL MAPPING =================
+# ---------------- GL MAPPING ----------------
 GL_MAPPING = {
-    "Insurance": ("432200", "Insurance on Vehicle"),
-    "Blue Book": ("450110", "R&M of Vehicle (Ser)"),
-    "Fitness": ("450110", "R&M of Vehicle (Ser)"),
-    "Emission": ("450110", "R&M of Vehicle (Ser)")
+    "Vehicle Register (Blue Book)": ("450110", "R&M of Vehicle (Ser)"),
+    "Emission": ("450110", "R&M of Vehicle (Ser)"),
+    "Road Worthiness (Fitness)": ("450110", "R&M of Vehicle (Ser)"),
+    "Route Permit": ("450110", "R&M of Vehicle (Ser)"),
+    "Insurance": ("432200", "Insurance on Vehicle")
 }
 
-DOC_TYPES = list(GL_MAPPING.keys())
-
-# ================= SESSION STATE =================
-if "vehicle_data" not in st.session_state:
-    st.session_state.vehicle_data = pd.DataFrame(
-        columns=[
-            "Vehicle No",
-            "Vehicle Description",
-            "Document Type",
-            "Amount (Nu.)",
-            "Start Date",
-            "End Date"
-        ]
-    )
-
-# ================= CALCULATION LOGIC =================
-def calculate_prepaid(amount, start_date, end_date):
+# ---------------- CALCULATION LOGIC ----------------
+def calculate_row(row):
+    premium = row["Total Amount (Nu.)"]
+    start_date = row["Start Date"]
+    end_date = row["End Date"]
+    
     total_days = (end_date - start_date).days + 1
-    rate_per_day = amount / total_days
+    if total_days <= 0:
+        return None
 
+    rate_per_day = round(premium / total_days, 4)
     first_prepaid_day = date(start_date.year + 1, 1, 1)
 
     if end_date < first_prepaid_day:
+        current_days = total_days
         prepaid_days = 0
     else:
+        last_day_year = date(start_date.year, 12, 31)
+        current_days = (last_day_year - start_date).days + 1
         prepaid_days = (end_date - first_prepaid_day).days + 1
 
-    prepaid_amount = round(prepaid_days * rate_per_day, 2)
-    current_amount = round(amount - prepaid_amount, 2)
+    prepaid_amount = round(rate_per_day * prepaid_days, 2)
+    current_amount = round(premium - prepaid_amount, 2)
+    
+    gl_code, gl_desc = GL_MAPPING.get(row["Document Type"], ("N/A", "N/A"))
 
-    return current_amount, prepaid_amount
+    return pd.Series({
+        "GL Code": gl_code,
+        "GL Description": gl_desc,
+        "Total Days": total_days,
+        "Rate/Day": rate_per_day,
+        "Curr. Days": current_days,
+        "Prepaid Days": prepaid_days,
+        "Current Exp": current_amount,
+        "Prepaid Exp": prepaid_amount
+    })
 
-# ================= HEADER =================
-st.markdown(
-    """
-    <div style="text-align:center; padding:18px; border-radius:12px;
-    background: linear-gradient(90deg, #1f77b4, #2ca02c);">
-        <h1 style="color:white; margin:0;">Vehicle Prepaid Calculator</h1>
-        <h4 style="color:#e6f2ff;">Developed by: PRAKASH GIRI</h4>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="Multi-Vehicle Prepaid Calculator", layout="wide")
 
-st.markdown("---")
+st.markdown("""
+<div style="text-align:center; padding:10px; border-radius:12px; background: linear-gradient(90deg, #1f77b4, #2ca02c);">
+    <h1 style="margin:0; color:white;">Vehicle Prepaid Calculator</h1>
+    <h3 style="margin-top:5px; color:#e8f4ff;">Developed by: PRAKASH GIRI (KASH BRO)</h3>
+</div>
+""", unsafe_allow_html=True)
 
-# ================= SIDEBAR INPUT =================
-st.sidebar.header("➕ Add Vehicle Entry")
+st.write("### Enter Vehicle Details Below")
+st.info("Add rows by clicking the '+' at the bottom of the table. Ensure dates are in YYYY-MM-DD format.")
 
-vehicle_no = st.sidebar.text_input("Vehicle No")
-vehicle_desc = st.sidebar.text_input("Vehicle Description")
-doc_type = st.sidebar.selectbox("Document Type", DOC_TYPES)
-amount = st.sidebar.number_input("Amount (Nu.)", min_value=0.0, step=0.01)
-start_date = st.sidebar.date_input("Start Date")
-end_date = st.sidebar.date_input("End Date")
-
-if st.sidebar.button("Add Vehicle"):
-    if vehicle_no and vehicle_desc:
-        new_row = {
-            "Vehicle No": vehicle_no,
-            "Vehicle Description": vehicle_desc,
-            "Document Type": doc_type,
-            "Amount (Nu.)": amount,
-            "Start Date": start_date,
-            "End Date": end_date
-        }
-
-        st.session_state.vehicle_data = pd.concat(
-            [st.session_state.vehicle_data, pd.DataFrame([new_row])],
-            ignore_index=True
-        )
-
-        st.sidebar.success("Vehicle added successfully")
-    else:
-        st.sidebar.error("Vehicle No and Description are required")
-
-# ================= DISPLAY INPUT TABLE =================
-st.subheader("📋 Entered Vehicle Data")
+# ---------------- DATA INPUT TABLE ----------------
+# Default empty dataframe for the editor
+if 'df_input' not in st.session_state:
+    st.session_state.df_input = pd.DataFrame([{
+        "Vehicle No": "BP-1-A1234",
+        "Document Type": "Insurance",
+        "Total Amount (Nu.)": 5000.00,
+        "Start Date": date(2025, 1, 1),
+        "End Date": date(2025, 12, 31)
+    }])
 
 edited_df = st.data_editor(
-    st.session_state.vehicle_data,
+    st.session_state.df_input,
+    num_rows="dynamic",
     use_container_width=True,
-    num_rows="dynamic"
+    column_config={
+        "Document Type": st.column_config.SelectboxColumn(options=list(GL_MAPPING.keys())),
+        "Start Date": st.column_config.DateColumn(),
+        "End Date": st.column_config.DateColumn(),
+        "Total Amount (Nu.)": st.column_config.NumberColumn(format="Nu. %.2f")
+    }
 )
 
-st.session_state.vehicle_data = edited_df
+# ---------------- EXECUTION ----------------
+if st.button("Generate Consolidated Report"):
+    try:
+        # Apply calculation logic to every row
+        results_df = edited_df.apply(calculate_row, axis=1)
+        
+        # Combine input data with calculated results
+        final_report = pd.concat([edited_df, results_df], axis=1)
+        
+        st.divider()
+        st.subheader("Final Prepaid Report")
+        st.dataframe(final_report, use_container_width=True)
 
-# ================= GENERATE REPORT =================
-if st.button("📊 Generate Prepaid Report"):
-    if edited_df.empty:
-        st.warning("No vehicle data entered")
-    else:
-        results = []
+        # Totals Summary
+        t1, t2, t3 = st.columns(3)
+        t1.metric("Total Premium", f"Nu. {final_report['Total Amount (Nu.)'].sum():,.2f}")
+        t2.metric("Total Current Expense", f"Nu. {final_report['Current Exp'].sum():,.2f}")
+        t3.metric("Total Prepaid (GL 284000)", f"Nu. {final_report['Prepaid Exp'].sum():,.2f}")
 
-        for idx, row in edited_df.iterrows():
-            current_amt, prepaid_amt = calculate_prepaid(
-                row["Amount (Nu.)"],
-                row["Start Date"],
-                row["End Date"]
-            )
-
-            gl_code, _ = GL_MAPPING[row["Document Type"]]
-
-            results.append(
-                {
-                    "Sl No": idx + 1,
-                    "Vehicle No": row["Vehicle No"],
-                    "Vehicle Description": row["Vehicle Description"],
-                    "GL Code": gl_code,
-                    "Document Type": row["Document Type"],
-                    "Current Amount (Nu.)": current_amt,
-                    "Prepaid Amount (Nu.)": prepaid_amt
-                }
-            )
-
-        result_df = pd.DataFrame(results)
-
-        # ================= PIVOT TABLE =================
-        pivot_df = (
-            result_df.pivot_table(
-                index=["Sl No", "Vehicle No", "Vehicle Description"],
-                columns="Document Type",
-                values=["Current Amount (Nu.)", "Prepaid Amount (Nu.)"],
-                aggfunc="sum",
-                fill_value=0
-            )
-            .reset_index()
-        )
-
-        # ===== FLATTEN MULTIINDEX COLUMNS (CRITICAL) =====
-        pivot_df.columns = [
-            f"{col[0]} - {col[1]}" if isinstance(col, tuple) else col
-            for col in pivot_df.columns
-        ]
-
-        st.markdown("---")
-        st.subheader("✅ Vehicle Prepaid Summary")
-        st.dataframe(pivot_df, use_container_width=True)
-
-        st.success(
-            f"Total Prepaid Amount: Nu. {result_df['Prepaid Amount (Nu.)'].sum():,.2f}"
-        )
-
-        # ================= EXCEL EXPORT =================
+        # ---------------- EXCEL EXPORT ----------------
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            pivot_df.to_excel(
-                writer,
-                sheet_name="Prepaid Report",
-                index=False
-            )
-
-        output.seek(0)
+            final_report.to_excel(writer, sheet_name="Prepaid_Summary", index=False)
+        processed_data = output.getvalue()
 
         st.download_button(
-            label="📤 Export to Excel",
-            data=output,
-            file_name="Vehicle_Prepaid_Report.xlsx",
+            label="📤 Download Excel Report",
+            data=processed_data,
+            file_name=f"Vehicle_Prepaid_Report_{date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+    except Exception as e:
+        st.error(f"Error in calculation. Please check your date entries. Details: {e}")
 
 st.markdown("---")
-st.caption("Vehicle Prepaid Calculator | Bhutan | Financial Year Based")
+st.caption("Vehicle Prepaid Calculator | Financial Year Alignment | Bhutan")
