@@ -1,28 +1,28 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from dateutil.relativedelta import relativedelta
-import calendar
 from io import BytesIO
 
 # ---------------- GL MAPPING ----------------
-GL_MAPPING = {
-    "Vehicle Register (Blue Book)": ("450110", "R&M of Vehicle (Ser)"),
-    "Emission": ("450110", "R&M of Vehicle (Ser)"),
-    "Road Worthiness (Fitness)": ("450110", "R&M of Vehicle (Ser)"),
-    "Route Permit": ("450110", "R&M of Vehicle (Ser)"),
-    "Insurance": ("432200", "Insurance on Vehicle")
+# As per your sample file
+GL_CODES = {
+    "Insurance": "432200",
+    "Blue Book": "450110",
+    "Fitness": "450110",
+    "Emission": "450110",
+    "Fuel": "450600",
+    "Prepaid": "284000"
 }
 
 # ---------------- CALCULATION LOGIC ----------------
-def calculate_prepaid_details(vehicle_no, item_type, premium, start_dt, end_dt):
-    gl_code, gl_desc = GL_MAPPING[item_type]
+def get_split(premium, start_dt, end_dt):
+    if premium == 0:
+        return 0.0, 0.0
     total_days = (end_dt - start_dt).days + 1
-    
     if total_days <= 0:
-        return None
-
-    rate_per_day = premium / total_days
+        return 0.0, 0.0
+    
+    # Financial Year ends on Dec 31
     year_end = date(start_dt.year, 12, 31)
     
     if end_dt <= year_end:
@@ -31,109 +31,135 @@ def calculate_prepaid_details(vehicle_no, item_type, premium, start_dt, end_dt):
     else:
         curr_days = (year_end - start_dt).days + 1
         pre_days = total_days - curr_days
-            
-    prepaid_amt = round(rate_per_day * pre_days, 2)
+        
+    rate = premium / total_days
+    prepaid_amt = round(rate * pre_days, 2)
     current_amt = round(premium - prepaid_amt, 2)
-    
-    return {
-        "Vehicle No": vehicle_no,
-        "Document": item_type,
-        "GL Code": gl_code,
-        "GL Desc": gl_desc,
-        "Premium": premium,
-        "Start": start_dt,
-        "End": end_dt,
-        "Total Days": total_days,
-        "Rate/Day": round(rate_per_day, 2),
-        "Curr Days": curr_days,
-        "Prepaid Days": pre_days,
-        "Current Amt": current_amt,
-        "Prepaid Amt": prepaid_amt
-    }
+    return current_amt, prepaid_amt
 
 # ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Vehicle Prepaid Accumulator", layout="wide")
+st.set_page_config(page_title="Vehicle Prepaid Reporter", layout="wide")
 
-# Initialize Session State to store the list of vehicles
-if 'master_list' not in st.session_state:
-    st.session_state.master_list = []
+if 'vehicles' not in st.session_state:
+    st.session_state.vehicles = []
 
 # ---------------- HEADER ----------------
 st.markdown("""
-<div style="text-align:center; padding:15px; border-radius:12px; background: linear-gradient(90deg, #1f77b4, #2ca02c);">
-    <h1 style="margin:0; color:white;">Vehicle Prepaid Accumulator</h1>
-    <h4 style="margin-top:5px; color:#e8f4ff;">Enter vehicles one by one to build your report</h4>
+<div style="text-align:center; padding:10px; border-radius:10px; background: linear-gradient(90deg, #1f77b4, #2ca02c); color:white;">
+    <h1 style="margin:0;">Vehicle Prepaid Statement Generator</h1>
+    <p style="margin:0;">Standardized Reporting Format | Developed by: PRAKASH GIRI (KASH BRO)</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- ENTRY FORM ----------------
-with st.container():
-    st.write("### 1. New Vehicle Entry")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        v_no = st.text_input("Vehicle No", placeholder="BP-1-A1234")
-    with col2:
-        v_type = st.selectbox("Document Type", list(GL_MAPPING.keys()))
-    with col3:
-        v_amt = st.number_input("Total Amount", min_value=0.0, value=2500.0, step=0.01)
-    with col4:
-        v_start = st.date_input("Start Date", value=date.today())
-    with col5:
-        v_end = st.date_input("End Date", value=date.today() + relativedelta(years=1, days=-1))
+# ---------------- INPUT SECTION ----------------
+st.write("### 1. Enter Vehicle Information")
+with st.expander("Click to enter details for a new vehicle", expanded=True):
+    row1_col1, row1_col2, row1_col3 = st.columns([2, 2, 1])
+    v_no = row1_col1.text_input("Vehicle No", placeholder="e.g. BG-3-A0394")
+    v_desc = row1_col2.text_input("Description", placeholder="e.g. (Bolero)")
+    v_fuel = row1_col3.number_input("Fuel Prepaid (Nu.)", min_value=0.0, value=15000.0)
 
-    if st.button("➕ Add Vehicle to Table", use_container_width=True):
+    st.divider()
+    # Using 4 columns for each document type: Amount, Start Date, End Date
+    def doc_inputs(label):
+        st.write(f"**{label} Details**")
+        c1, c2, c3 = st.columns(3)
+        amt = c1.number_input(f"{label} Amount", min_value=0.0, key=f"{label}_amt")
+        start = c2.date_input(f"{label} Start", value=date(2025, 1, 1), key=f"{label}_s")
+        end = c3.date_input(f"{label} End", value=date(2025, 12, 31), key=f"{label}_e")
+        return amt, start, end
+
+    ins_amt, ins_s, ins_e = doc_inputs("Insurance")
+    bb_amt, bb_s, bb_e = doc_inputs("Blue Book")
+    fit_amt, fit_s, fit_e = doc_inputs("Fitness")
+    em_amt, em_s, em_e = doc_inputs("Emission")
+
+    # Action Buttons
+    btn_col1, btn_col2 = st.columns(2)
+    if btn_col1.button("➕ Add Vehicle to List", use_container_width=True):
         if v_no:
-            new_record = calculate_prepaid_details(v_no, v_type, v_amt, v_start, v_end)
-            if new_record:
-                st.session_state.master_list.append(new_record)
-                st.toast(f"Added {v_no} successfully!")
-            else:
-                st.error("End Date must be after Start Date.")
+            # Calculate splits immediately
+            i_c, i_p = get_split(ins_amt, ins_s, ins_e)
+            b_c, b_p = get_split(bb_amt, bb_s, bb_e)
+            f_c, f_p = get_split(fit_amt, fit_s, fit_e)
+            e_c, e_p = get_split(em_amt, em_s, em_e)
+            
+            st.session_state.vehicles.append({
+                "Vehicle No.": v_no,
+                "Vehicle Discription": v_desc,
+                "Fuel Prepaid": v_fuel,
+                "Ins_C": i_c, "Ins_P": i_p,
+                "BB_C": b_c, "BB_P": b_p,
+                "Fit_C": f_c, "Fit_P": f_p,
+                "Em_C": e_c, "Em_P": e_p
+            })
+            st.success(f"Added {v_no}")
         else:
-            st.warning("Please enter a Vehicle Number.")
+            st.error("Please enter a Vehicle Number.")
+            
+    if btn_col2.button("🚀 Calculate & Generate Report", type="primary", use_container_width=True):
+        st.session_state.show_report = True
 
-# ---------------- MASTER TABLE ----------------
-if st.session_state.master_list:
-    st.write("---")
-    st.subheader("2. Consolidated Vehicle Records")
-    
-    df = pd.DataFrame(st.session_state.master_list)
-    
-    # Display the table
-    st.table(df)
+# ---------------- REPORT SECTION ----------------
+if st.session_state.get('show_report') and st.session_state.vehicles:
+    st.divider()
+    st.subheader("Final Prepaid Report")
 
-    # Summary Calculations
-    total_prepaid = df["Prepaid Amt"].sum()
-    total_current = df["Current Amt"].sum()
+    # Prepare Dataframe for table display
+    data = []
+    for i, v in enumerate(st.session_state.vehicles):
+        data.append([
+            i+1, v["Vehicle No."], v["Vehicle Discription"], v["Fuel Prepaid"],
+            v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
+            v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]
+        ])
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Vehicles Added", len(df))
-    c2.metric("Total Current Expense", f"Nu. {total_current:,.2f}")
-    c3.metric("Total Prepaid (GL 284000)", f"Nu. {total_prepaid:,.2f}")
-
-    # ---------------- EXPORT & CLEAR ----------------
-    st.write("---")
-    col_ex, col_cl = st.columns([1, 1])
+    cols = ["Si. No.", "Vehicle No.", "Vehicle Discription", "Fuel Prepaid", 
+            "Insurance Current", "Insurance Prepaid", "Blue Book Current", "Blue Book Prepaid",
+            "Fitness Current", "Fitness Prepaid", "Emission Current", "Emission Prepaid"]
     
-    with col_ex:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, sheet_name="Prepaid_Report", index=False)
-        st.download_button(
-            label="📥 Download Consolidated Excel",
-            data=output.getvalue(),
-            file_name="Vehicle_Prepaid_Summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    df_report = pd.DataFrame(data, columns=cols)
     
-    with col_cl:
-        if st.button("🗑️ Clear All Records"):
-            st.session_state.master_list = []
-            st.rerun()
+    # Calculate Totals
+    totals = df_report.sum(numeric_only=True)
+    total_row = pd.DataFrame([["", "", "TOTAL", totals["Fuel Prepaid"], 
+                               totals["Insurance Current"], totals["Insurance Prepaid"],
+                               totals["Blue Book Current"], totals["Blue Book Prepaid"],
+                               totals["Fitness Current"], totals["Fitness Prepaid"],
+                               totals["Emission Current"], totals["Emission Prepaid"]]], columns=cols)
+    
+    final_display_df = pd.concat([df_report, total_row], ignore_index=True)
+    st.dataframe(final_display_df, use_container_width=True)
 
-else:
-    st.info("No records added yet. Use the form above to start.")
+    # ---------------- JOURNAL ENTRIES ----------------
+    st.write("### Accounting Journal Entries")
+    total_fuel = totals["Fuel Prepaid"]
+    total_ins_pre = totals["Insurance Prepaid"]
+    total_rm_pre = totals["Blue Book Prepaid"] + totals["Fitness Prepaid"] + totals["Emission Prepaid"]
+    grand_prepaid = total_fuel + total_ins_pre + total_rm_pre
 
-st.markdown("---")
-st.caption("Developed by: PRAKASH GIRI (KASH BRO) | Bhutan")
+    je_data = [
+        ["Dr.", f"{GL_CODES['Prepaid']} Prepaid Expenses", f"{grand_prepaid:,.2f}", ""],
+        ["Cr.", f"{GL_CODES['Fuel']} vehicle fuel", "", f"{total_fuel:,.2f}"],
+        ["Cr.", f"{GL_CODES['Insurance']} insurance of Vehicle", "", f"{total_ins_pre:,.2f}"],
+        ["Cr.", f"{GL_CODES['Blue Book']} R & M of Vehicle", "", f"{total_rm_pre:,.2f}"],
+    ]
+    je_df = pd.DataFrame(je_data, columns=["Type", "Particulars", "Debit", "Credit"])
+    st.table(je_df)
+
+    # ---------------- DOWNLOAD ----------------
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        final_display_df.to_excel(writer, sheet_name='Report', index=False)
+    
+    st.download_button(
+        label="📥 Download Excel Report",
+        data=output.getvalue(),
+        file_name=f"Vehicle_Prepaid_Report_{date.today()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    if st.button("Clear All Data"):
+        st.session_state.vehicles = []
+        st.session_state.show_report = False
+        st.rerun()
