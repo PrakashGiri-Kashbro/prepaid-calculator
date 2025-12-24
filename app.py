@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from io import BytesIO
 
-# ---------------- GL MAPPING ----------------
+# ---------------- GL MAPPING (Based on your provided Excel structure) ----------------
 GL_CODES = {
     "Insurance": "432200",
     "Blue Book": "450110",
@@ -19,7 +19,7 @@ def get_split(premium, start_dt, end_dt):
     total_days = (end_dt - start_dt).days + 1
     if total_days <= 0: return 0.0, 0.0
     
-    # Financial Year Alignment (Dec 31)
+    # Financial Year Alignment (Ends Dec 31)
     year_end = date(start_dt.year, 12, 31)
     if end_dt <= year_end:
         curr_days, pre_days = total_days, 0
@@ -35,29 +35,36 @@ def get_split(premium, start_dt, end_dt):
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Vehicle Prepaid Reporter", layout="wide")
 
+# Initialize Session States
 if 'vehicles' not in st.session_state:
     st.session_state.vehicles = []
 if 'entry_status' not in st.session_state:
     st.session_state.entry_status = "Waiting for input..."
 
-# ---------------- SIDEBAR (Indicator & Stats) ----------------
+# ---------------- SIDEBAR (ENTRY INDICATOR) ----------------
 with st.sidebar:
-    st.header("Activity Monitor")
+    st.header("📊 Entry Indicator")
+    
     if "Waiting" in st.session_state.entry_status:
         st.info(st.session_state.entry_status)
-    elif "Success" in st.session_state.entry_status:
-        st.success(st.session_state.entry_status)
-    else:
+    elif "Duplicate" in st.session_state.entry_status or "Error" in st.session_state.entry_status:
         st.error(st.session_state.entry_status)
+    else:
+        st.success(st.session_state.entry_status)
     
     st.divider()
-    st.metric("Total Records", len(st.session_state.vehicles))
+    st.subheader("Stored Records")
+    if st.session_state.vehicles:
+        for v in st.session_state.vehicles:
+            st.caption(f"✅ {v['Vehicle No.']}")
+    else:
+        st.write("No vehicles added yet.")
 
 # ---------------- HEADER ----------------
 st.markdown("""
 <div style="text-align:center; padding:10px; border-radius:10px; background: linear-gradient(90deg, #1f77b4, #2ca02c); color:white;">
     <h1 style="margin:0;">Vehicle Prepaid Statement Generator</h1>
-    <p style="margin:0;">Standardized Reporting | Developed by: PRAKASH GIRI (KASH BRO)</p>
+    <p style="margin:0;">Developed by: PRAKASH GIRI (KASH BRO)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -65,16 +72,18 @@ st.markdown("""
 st.write("### 1. New Vehicle Entry Form")
 with st.container(border=True):
     c1, c2, c3 = st.columns([2, 2, 1])
-    v_no = c1.text_input("Vehicle No", placeholder="BG-3-A0394").strip().upper()
-    v_desc = c2.text_input("Description", placeholder="(Bolero)")
-    v_fuel = c3.number_input("Fuel Prepaid", min_value=0.0)
+    v_no = c1.text_input("Vehicle No", placeholder="e.g. BG-3-A0394").strip().upper()
+    v_desc = c2.text_input("Description", placeholder="e.g. Isuzu D-Max")
+    v_fuel = c3.number_input("Fuel Prepaid (Nu.)", min_value=0.0)
 
+    # Reusable row for document details
     def doc_row(label):
         st.markdown(f"**{label}**")
         r1, r2, r3 = st.columns(3)
-        amt = r1.number_input("Amount", min_value=0.0, key=f"{label}_a")
-        start = r2.date_input("Start Date", value=date(2025,1,1), key=f"{label}_s")
-        end = r3.date_input("End Date", value=date(2025,12,31), key=f"{label}_e")
+        amt = r1.number_input(f"Amount", min_value=0.0, key=f"{label}_a")
+        # Streamlit date_input format for UI display
+        start = r2.date_input(f"Start Date", value=date(2025,1,1), format="DD/MM/YYYY", key=f"{label}_s")
+        end = r3.date_input(f"End Date", value=date(2025,12,31), format="DD/MM/YYYY", key=f"{label}_e")
         return amt, start, end
 
     ins_a, ins_s, ins_e = doc_row("Insurance")
@@ -85,10 +94,10 @@ with st.container(border=True):
     st.write("")
     col_btn1, col_btn2 = st.columns(2)
     
-    # ADD VEHICLE BUTTON
+    # ➕ ADD VEHICLE BUTTON
     if col_btn1.button("➕ Add New Vehicle", use_container_width=True):
         if not v_no:
-            st.session_state.entry_status = "Error: Vehicle Number is missing!"
+            st.session_state.entry_status = "Error: Please enter a Vehicle No."
         elif any(v['Vehicle No.'] == v_no for v in st.session_state.vehicles):
             st.session_state.entry_status = f"Duplicate Error: {v_no} already exists!"
         else:
@@ -98,70 +107,23 @@ with st.container(border=True):
             e_c, e_p = get_split(em_a, em_s, em_e)
             
             st.session_state.vehicles.append({
-                "Vehicle No.": v_no, "Vehicle Discription": v_desc, "Fuel Prepaid": v_fuel,
-                "Ins_C": i_c, "Ins_P": i_p, "BB_C": b_c, "BB_P": b_p,
-                "Fit_C": f_c, "Fit_P": f_p, "Em_C": e_c, "Em_P": e_p
+                "Vehicle No.": v_no,
+                "Vehicle Discription": v_desc,
+                "Fuel Prepaid": v_fuel,
+                "Ins_C": i_c, "Ins_P": i_p,
+                "BB_C": b_c, "BB_P": b_p,
+                "Fit_C": f_c, "Fit_P": f_p,
+                "Em_C": e_c, "Em_P": e_p
             })
-            st.session_state.entry_status = f"Success: {v_no} added."
+            st.session_state.entry_status = f"Success: {v_no} added to report."
             st.rerun()
 
-    # CALCULATE BUTTON
+    # 🚀 CALCULATE BUTTON
     if col_btn2.button("🚀 Calculate & Generate Report", type="primary", use_container_width=True):
         if not st.session_state.vehicles:
-            st.session_state.entry_status = "Error: No data to calculate!"
+            st.session_state.entry_status = "Error: No data available to calculate."
         else:
             st.session_state.show_report = True
 
 # ---------------- OUTPUT REPORT ----------------
-if st.session_state.get('show_report') and st.session_state.vehicles:
-    st.divider()
-    data = []
-    for i, v in enumerate(st.session_state.vehicles):
-        data.append([
-            i+1, v["Vehicle No."], v["Vehicle Discription"], v["Fuel Prepaid"],
-            v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
-            v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]
-        ])
-    
-    cols = ["Si. No.", "Vehicle No.", "Vehicle Discription", "Fuel Prepaid", 
-            "Insurance Current", "Insurance Prepaid", "Blue Book Current", "Blue Book Prepaid",
-            "Fitness Current", "Fitness Prepaid", "Emission Current", "Emission Prepaid"]
-    
-    df_main = pd.DataFrame(data, columns=cols)
-    sums = df_main.sum(numeric_only=True)
-    
-    # Add Total Row
-    total_row = pd.DataFrame([["", "TOTAL", "", sums["Fuel Prepaid"], 
-                               sums.get("Insurance Current",0), sums.get("Insurance Prepaid",0),
-                               sums.get("Blue Book Current",0), sums.get("Blue Book Prepaid",0),
-                               sums.get("Fitness Current",0), sums.get("Fitness Prepaid",0),
-                               sums.get("Emission Current",0), sums.get("Emission Prepaid",0)]], columns=cols)
-    
-    st.write("### Consolidated Table")
-    st.dataframe(pd.concat([df_main, total_row], ignore_index=True), use_container_width=True)
-
-    # ---------------- ACCOUNTING ENTRIES ----------------
-    st.write("### Journal Entries")
-    total_f = sums["Fuel Prepaid"]
-    total_i_p = sums["Insurance Prepaid"]
-    total_rm_p = sums["Blue Book Prepaid"] + sums["Fitness Prepaid"] + sums["Emission Prepaid"]
-    
-    je = [
-        ["Dr.", f"{GL_CODES['Prepaid']} Prepaid Expenses", f"{(total_f+total_i_p+total_rm_p):,.2f}", ""],
-        ["Cr.", f"{GL_CODES['Fuel']} vehicle fuel", "", f"{total_f:,.2f}"],
-        ["Cr.", f"{GL_CODES['Insurance']} insurance of Vehicle", "", f"{total_i_p:,.2f}"],
-        ["Cr.", f"{GL_CODES['Blue Book']} R & M of Vehicle", "", f"{total_rm_p:,.2f}"]
-    ]
-    st.table(pd.DataFrame(je, columns=["Type", "Particulars", "Debit (Nu.)", "Credit (Nu.)"]))
-
-    # Download
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_main.to_excel(writer, sheet_name='Prepaid_Report', index=False)
-    st.download_button("📤 Download Excel", output.getvalue(), "Vehicle_Prepaid.xlsx")
-
-    if st.button("🗑️ Reset All Records"):
-        st.session_state.vehicles = []
-        st.session_state.entry_status = "Waiting for input..."
-        st.session_state.show_report = False
-        st.rerun()
+if st.session
