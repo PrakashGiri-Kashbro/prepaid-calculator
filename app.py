@@ -36,22 +36,20 @@ def get_split(premium, start_dt, end_dt):
 
 # ---------------- SESSION STATE ----------------
 if 'vehicles' not in st.session_state:
-    st.session_state.vehicles = []
+    st.session_state.vehicles = {} # Changed to dictionary for better lookups
 if 'entry_status' not in st.session_state:
-    st.session_state.entry_status = "Ready for new entry"
+    st.session_state.entry_status = "Ready"
 if 'show_report' not in st.session_state:
     st.session_state.show_report = False
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.header("📋 New Vehicle Entry")
+    st.header("📋 Vehicle Entry")
     
     if "Success" in st.session_state.entry_status:
         st.success(st.session_state.entry_status)
     elif "Error" in st.session_state.entry_status:
         st.error(st.session_state.entry_status)
-    else:
-        st.info(st.session_state.entry_status)
 
     with st.form("entry_form", clear_on_submit=True):
         v_no = st.text_input("Vehicle No", placeholder="BG-3-A0394").strip().upper()
@@ -71,38 +69,52 @@ with st.sidebar:
         fit_a, fit_s, fit_e = doc_input_group("Fitness")
         em_a, em_s, em_e = doc_input_group("Emission")
 
-        submitted = st.form_submit_button("➕ Add to List", use_container_width=True)
+        submitted = st.form_submit_button("➕ Add / Update Vehicle", use_container_width=True)
         
         if submitted:
             if not v_no:
-                st.session_state.entry_status = "Error: Vehicle No is required!"
-            elif any(v['Vehicle No.'] == v_no for v in st.session_state.vehicles):
-                st.session_state.entry_status = f"Error: {v_no} exists!"
+                st.session_state.entry_status = "Error: Vehicle No required!"
             else:
+                # Calculations
                 i_c, i_p = get_split(ins_a, ins_s, ins_e)
                 b_c, b_p = get_split(bb_a, bb_s, bb_e)
                 f_c, f_p = get_split(fit_a, fit_s, fit_e)
                 e_c, e_p = get_split(em_a, em_s, em_e)
                 
-                st.session_state.vehicles.append({
-                    "Vehicle No.": v_no, "Vehicle Description": v_desc, "Fuel Prepaid": v_fuel,
-                    "Ins_C": i_c, "Ins_P": i_p, "BB_C": b_c, "BB_P": b_p,
-                    "Fit_C": f_c, "Fit_P": f_p, "Em_C": e_c, "Em_P": e_p
-                })
-                st.session_state.entry_status = f"Success: {v_no} added."
+                # Check if vehicle exists to merge data instead of blocking
+                existing = st.session_state.vehicles.get(v_no, {})
+                
+                # Logic: If user enters 0 for a field, keep existing value. If > 0, update it.
+                new_data = {
+                    "Vehicle No.": v_no,
+                    "Vehicle Description": v_desc if v_desc else existing.get("Vehicle Description", ""),
+                    "Fuel Prepaid": v_fuel if v_fuel > 0 else existing.get("Fuel Prepaid", 0.0),
+                    "Ins_C": i_c if ins_a > 0 else existing.get("Ins_C", 0.0),
+                    "Ins_P": i_p if ins_a > 0 else existing.get("Ins_P", 0.0),
+                    "BB_C": b_c if bb_a > 0 else existing.get("BB_C", 0.0),
+                    "BB_P": b_p if bb_a > 0 else existing.get("BB_P", 0.0),
+                    "Fit_C": f_c if fit_a > 0 else existing.get("Fit_C", 0.0),
+                    "Fit_P": f_p if fit_a > 0 else existing.get("Fit_P", 0.0),
+                    "Em_C": e_c if em_a > 0 else existing.get("Em_C", 0.0),
+                    "Em_P": e_p if em_a > 0 else existing.get("Em_P", 0.0)
+                }
+                
+                st.session_state.vehicles[v_no] = new_data
+                st.session_state.entry_status = f"Success: {v_no} updated."
+                st.session_state.show_report = False # Reset report view so they click Calculate to refresh
                 st.rerun()
 
     if st.button("🚀 Calculate & Show Report", type="primary", use_container_width=True):
         if not st.session_state.vehicles:
-            st.session_state.entry_status = "Error: No data added!"
+            st.session_state.entry_status = "Error: No data!"
         else:
             st.session_state.show_report = True
-            st.rerun() # This forces the app to show the report immediately
+            st.rerun()
 
     if st.button("🗑️ Reset All", use_container_width=True):
-        st.session_state.vehicles = []
+        st.session_state.vehicles = {}
         st.session_state.show_report = False
-        st.session_state.entry_status = "Ready for new entry"
+        st.session_state.entry_status = "Ready"
         st.rerun()
 
 # ---------------- MAIN CONTENT ----------------
@@ -113,23 +125,35 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+if not st.session_state.show_report:
+    st.subheader("📝 Pending Entries")
+    if st.session_state.vehicles:
+        pending_df = pd.DataFrame(st.session_state.vehicles.values())
+        st.dataframe(pending_df[["Vehicle No.", "Vehicle Description"]], use_container_width=True)
+    else:
+        st.info("👈 Use the Sidebar to add vehicles. You can update the same vehicle with different documents (Insurance, Blue Book, etc.) one by one.")
+
 if st.session_state.show_report and st.session_state.vehicles:
-    # Logic for generating df_main and df_je remains same as your original code...
-    # (Extracting data for display)
-    data = [[i+1, v["Vehicle No."], v["Vehicle Description"], v["Fuel Prepaid"],
-             v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
-             v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]] 
-            for i, v in enumerate(st.session_state.vehicles)]
-    
-    cols = ["Si. No.", "Vehicle No.", "Vehicle Description", "Fuel Prepaid", 
+    # Prepare Data
+    raw_data = list(st.session_state.vehicles.values())
+    cols = ["Vehicle No.", "Vehicle Description", "Fuel Prepaid", 
             "Ins Current", "Ins Prepaid", "BB Current", "BB Prepaid",
             "Fit Current", "Fit Prepaid", "Em Current", "Em Prepaid"]
     
-    df_main = pd.DataFrame(data, columns=cols)
+    # Map raw dictionary keys to display columns
+    display_data = []
+    for i, v in enumerate(raw_data):
+        display_data.append([
+            v["Vehicle No."], v["Vehicle Description"], v["Fuel Prepaid"],
+            v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
+            v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]
+        ])
+
+    df_main = pd.DataFrame(display_data, columns=cols)
     sums = df_main.sum(numeric_only=True)
     
-    # Final table assembly
-    total_row = pd.DataFrame([["", "TOTAL", "", sums["Fuel Prepaid"], 
+    # Final table assembly with Total Row
+    total_row = pd.DataFrame([["TOTAL", "", sums["Fuel Prepaid"], 
                                sums.get("Ins Current",0), sums.get("Ins Prepaid",0),
                                sums.get("BB Current",0), sums.get("BB Prepaid",0),
                                sums.get("Fit Current",0), sums.get("Fit Prepaid",0),
@@ -152,6 +176,3 @@ if st.session_state.show_report and st.session_state.vehicles:
     ]
     st.write("### 2. Accounting Journal Entries")
     st.table(pd.DataFrame(je_data, columns=["Type", "Particulars", "Debit", "Credit"]))
-
-else:
-    st.info("👈 Use the Sidebar to add vehicles, then click 'Calculate & Show Report'.")
