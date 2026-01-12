@@ -83,7 +83,6 @@ with st.sidebar:
                 
                 existing = st.session_state.vehicles.get(v_no, {})
                 
-                # Update existing vehicle data or create new
                 st.session_state.vehicles[v_no] = {
                     "Vehicle No.": v_no,
                     "Vehicle Description": v_desc if v_desc else existing.get("Vehicle Description", ""),
@@ -97,7 +96,7 @@ with st.sidebar:
                     "Em_C": e_c if em_a > 0 else existing.get("Em_C", 0.0),
                     "Em_P": e_p if em_a > 0 else existing.get("Em_P", 0.0)
                 }
-                st.session_state.entry_status = f"Success: {v_no} updated."
+                st.session_state.entry_status = f"Success: {v_no} added to draft."
                 st.session_state.show_report = False 
                 st.rerun()
 
@@ -108,7 +107,7 @@ with st.sidebar:
             st.session_state.show_report = True
             st.rerun()
 
-    if st.button("🗑️ Reset All", use_container_width=True):
+    if st.button("🗑️ Reset Everything", use_container_width=True):
         st.session_state.vehicles = {}
         st.session_state.show_report = False
         st.session_state.entry_status = "Ready"
@@ -122,16 +121,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Main Logic to Display Report or Queue
 if st.session_state.show_report and st.session_state.vehicles:
-    if st.button("⬅️ Back to Entry Form"):
-        st.session_state.show_report = False
-        st.rerun()
+    st.button("⬅️ Back to Entry Form", on_click=lambda: setattr(st.session_state, 'show_report', False))
 
-    # Convert dictionary to DataFrame
     df_raw = pd.DataFrame(list(st.session_state.vehicles.values()))
     
-    # Rename for clean output
+    numeric_cols = ["Fuel Prepaid", "Ins_C", "Ins_P", "BB_C", "BB_P", "Fit_C", "Fit_P", "Em_C", "Em_P"]
+    for col in numeric_cols:
+        if col not in df_raw.columns:
+            df_raw[col] = 0.0
+
+    # Display Renaming
     cols_map = {
         "Vehicle No.": "Vehicle No.", "Vehicle Description": "Description",
         "Fuel Prepaid": "Fuel Prepaid", "Ins_C": "Ins Current", "Ins_P": "Ins Prepaid",
@@ -139,27 +139,16 @@ if st.session_state.show_report and st.session_state.vehicles:
         "Fit_P": "Fit Prepaid", "Em_C": "Em Current", "Em_P": "Em Prepaid"
     }
     df_display = df_raw.rename(columns=cols_map)
-    
-    # Ensure all required numeric columns are present (prevents errors with empty entries)
-    numeric_cols = ["Fuel Prepaid", "Ins Current", "Ins Prepaid", "BB Current", "BB Prepaid", 
-                    "Fit Current", "Fit Prepaid", "Em Current", "Em Prepaid"]
-    for col in numeric_cols:
-        if col not in df_display.columns:
-            df_display[col] = 0.0
+    disp_numeric = [cols_map[c] for c in numeric_cols]
 
-    # Calculate Totals
-    sums = df_display[numeric_cols].sum()
-    total_row_data = {col: sums[col] for col in numeric_cols}
-    total_row_data["Vehicle No."] = "TOTAL"
-    total_row_data["Description"] = ""
-    
-    total_row = pd.DataFrame([total_row_data])
+    sums = df_display[disp_numeric].sum()
+    total_row = pd.DataFrame([["TOTAL", ""] + sums.tolist()], columns=df_display.columns)
     final_table = pd.concat([df_display, total_row], ignore_index=True)
 
     st.write("### 1. Consolidated Statement")
     st.dataframe(final_table, use_container_width=True)
 
-    # Journal Entries
+    # Journal Entry
     total_f = sums["Fuel Prepaid"]
     total_i_p = sums["Ins Prepaid"]
     total_rm_p = sums["BB Prepaid"] + sums["Fit Prepaid"] + sums["Em Prepaid"]
@@ -175,11 +164,20 @@ if st.session_state.show_report and st.session_state.vehicles:
     st.table(pd.DataFrame(je_data, columns=["Type", "Particulars", "Debit", "Credit"]))
 
 else:
-    # Queue/Instruction View
-    st.subheader("📝 Current Vehicle List (Draft)")
+    # --- PENDING LIST & REMOVE BUTTONS ---
+    st.subheader("📝 Draft Entries (Manage before calculating)")
     if st.session_state.vehicles:
-        view_df = pd.DataFrame(list(st.session_state.vehicles.values()))
-        st.dataframe(view_df[["Vehicle No.", "Vehicle Description", "Fuel Prepaid"]], use_container_width=True)
-        st.success("Data loaded. Click 'Calculate & Show Report' in the sidebar to see results.")
+        for v_id in list(st.session_state.vehicles.keys()):
+            col1, col2, col3 = st.columns([3, 5, 2])
+            with col1:
+                st.write(f"**{v_id}**")
+            with col2:
+                st.write(f"({st.session_state.vehicles[v_id]['Vehicle Description']})")
+            with col3:
+                if st.button(f"❌ Remove {v_id}", key=f"del_{v_id}"):
+                    del st.session_state.vehicles[v_id]
+                    st.rerun()
+        
+        st.info("💡 You can add more vehicles or update existing ones in the sidebar. When ready, click 'Calculate & Show Report'.")
     else:
-        st.info("👈 Please enter vehicle details in the sidebar to begin.")
+        st.info("👈 Your list is empty. Add a vehicle using the sidebar to begin.")
