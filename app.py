@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from io import BytesIO
 
-# 1. ALWAYS DO PAGE CONFIG FIRST
+# 1. PAGE CONFIG
 st.set_page_config(page_title="Vehicle Prepaid Reporter", layout="wide")
 
 # ---------------- GL MAPPING ----------------
@@ -22,6 +22,7 @@ def get_split(premium, start_dt, end_dt):
     total_days = (end_dt - start_dt).days + 1
     if total_days <= 0: return 0.0, 0.0
     
+    # Financial Year ends Dec 31
     year_end = date(start_dt.year, 12, 31)
     if end_dt <= year_end:
         curr_days, pre_days = total_days, 0
@@ -36,7 +37,7 @@ def get_split(premium, start_dt, end_dt):
 
 # ---------------- SESSION STATE ----------------
 if 'vehicles' not in st.session_state:
-    st.session_state.vehicles = {} # Changed to dictionary for better lookups
+    st.session_state.vehicles = {} 
 if 'entry_status' not in st.session_state:
     st.session_state.entry_status = "Ready"
 if 'show_report' not in st.session_state:
@@ -75,17 +76,15 @@ with st.sidebar:
             if not v_no:
                 st.session_state.entry_status = "Error: Vehicle No required!"
             else:
-                # Calculations
                 i_c, i_p = get_split(ins_a, ins_s, ins_e)
                 b_c, b_p = get_split(bb_a, bb_s, bb_e)
                 f_c, f_p = get_split(fit_a, fit_s, fit_e)
                 e_c, e_p = get_split(em_a, em_s, em_e)
                 
-                # Check if vehicle exists to merge data instead of blocking
                 existing = st.session_state.vehicles.get(v_no, {})
                 
-                # Logic: If user enters 0 for a field, keep existing value. If > 0, update it.
-                new_data = {
+                # Merge data: only update if user provided a value > 0
+                st.session_state.vehicles[v_no] = {
                     "Vehicle No.": v_no,
                     "Vehicle Description": v_desc if v_desc else existing.get("Vehicle Description", ""),
                     "Fuel Prepaid": v_fuel if v_fuel > 0 else existing.get("Fuel Prepaid", 0.0),
@@ -98,10 +97,8 @@ with st.sidebar:
                     "Em_C": e_c if em_a > 0 else existing.get("Em_C", 0.0),
                     "Em_P": e_p if em_a > 0 else existing.get("Em_P", 0.0)
                 }
-                
-                st.session_state.vehicles[v_no] = new_data
                 st.session_state.entry_status = f"Success: {v_no} updated."
-                st.session_state.show_report = False # Reset report view so they click Calculate to refresh
+                st.session_state.show_report = False 
                 st.rerun()
 
     if st.button("🚀 Calculate & Show Report", type="primary", use_container_width=True):
@@ -125,45 +122,40 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if not st.session_state.show_report:
-    st.subheader("📝 Pending Entries")
-    if st.session_state.vehicles:
-        pending_df = pd.DataFrame(st.session_state.vehicles.values())
-        st.dataframe(pending_df[["Vehicle No.", "Vehicle Description"]], use_container_width=True)
-    else:
-        st.info("👈 Use the Sidebar to add vehicles. You can update the same vehicle with different documents (Insurance, Blue Book, etc.) one by one.")
-
+# THE KEY FIX: Ensuring report displays correctly
 if st.session_state.show_report and st.session_state.vehicles:
-    # Prepare Data
-    raw_data = list(st.session_state.vehicles.values())
-    cols = ["Vehicle No.", "Vehicle Description", "Fuel Prepaid", 
-            "Ins Current", "Ins Prepaid", "BB Current", "BB Prepaid",
-            "Fit Current", "Fit Prepaid", "Em Current", "Em Prepaid"]
-    
-    # Map raw dictionary keys to display columns
-    display_data = []
-    for i, v in enumerate(raw_data):
-        display_data.append([
-            v["Vehicle No."], v["Vehicle Description"], v["Fuel Prepaid"],
-            v["Ins_C"], v["Ins_P"], v["BB_C"], v["BB_P"],
-            v["Fit_C"], v["Fit_P"], v["Em_C"], v["Em_P"]
-        ])
+    if st.button("⬅️ Back to Entry"):
+        st.session_state.show_report = False
+        st.rerun()
 
-    df_main = pd.DataFrame(display_data, columns=cols)
-    sums = df_main.sum(numeric_only=True)
+    # Data Processing
+    df_main = pd.DataFrame(list(st.session_state.vehicles.values()))
     
-    # Final table assembly with Total Row
-    total_row = pd.DataFrame([["TOTAL", "", sums["Fuel Prepaid"], 
-                               sums.get("Ins Current",0), sums.get("Ins Prepaid",0),
-                               sums.get("BB Current",0), sums.get("BB Prepaid",0),
-                               sums.get("Fit Current",0), sums.get("Fit Prepaid",0),
-                               sums.get("Em Current",0), sums.get("Em Prepaid",0)]], columns=cols)
+    # Rename for display
+    cols_map = {
+        "Vehicle No.": "Vehicle No.", "Vehicle Description": "Description",
+        "Fuel Prepaid": "Fuel Prepaid", "Ins_C": "Ins Current", "Ins_P": "Ins Prepaid",
+        "BB_C": "BB Current", "BB_P": "BB Prepaid", "Fit_C": "Fit Current",
+        "Fit_P": "Fit Prepaid", "Em_C": "Em Current", "Em_P": "Em Prepaid"
+    }
+    df_main = df_main.rename(columns=cols_map)
+    
+    # Ensure all numeric columns exist
+    numeric_cols = ["Fuel Prepaid", "Ins Current", "Ins Prepaid", "BB Current", "BB Prepaid", 
+                    "Fit Current", "Fit Prepaid", "Em Current", "Em Prepaid"]
+    for col in numeric_cols:
+        if col not in df_main.columns:
+            df_main[col] = 0.0
+
+    # Calculate Totals
+    sums = df_main[numeric_cols].sum()
+    total_row = pd.DataFrame([["TOTAL", ""] + sums.tolist()], columns=df_main.columns)
     final_table = pd.concat([df_main, total_row], ignore_index=True)
 
     st.write("### 1. Consolidated Statement")
     st.dataframe(final_table, use_container_width=True)
 
-    # Journal Entry logic
+    # Journal Entries
     total_f = sums["Fuel Prepaid"]
     total_i_p = sums["Ins Prepaid"]
     total_rm_p = sums["BB Prepaid"] + sums["Fit Prepaid"] + sums["Em Prepaid"]
@@ -176,3 +168,8 @@ if st.session_state.show_report and st.session_state.vehicles:
     ]
     st.write("### 2. Accounting Journal Entries")
     st.table(pd.DataFrame(je_data, columns=["Type", "Particulars", "Debit", "Credit"]))
+
+else:
+    # Pending View
+    st.subheader("📝 Current Queue")
+    if st.session_
